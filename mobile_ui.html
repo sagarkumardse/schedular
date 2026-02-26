@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Calendar Automation</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 500px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+        
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            opacity: 0.9;
+            font-size: 14px;
+        }
+        
+        .card {
+            background: white;
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        
+        .input-group {
+            margin-bottom: 16px;
+        }
+        
+        label {
+            display: block;
+            font-size: 14px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 8px;
+        }
+        
+        textarea {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 16px;
+            font-family: inherit;
+            resize: vertical;
+            min-height: 80px;
+            transition: border-color 0.3s;
+        }
+        
+        textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .btn {
+            width: 100%;
+            padding: 14px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-bottom: 12px;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .btn-primary:active {
+            transform: scale(0.98);
+        }
+        
+        .btn-secondary {
+            background: #f5f5f5;
+            color: #333;
+        }
+        
+        .btn-danger {
+            background: #ff4757;
+            color: white;
+        }
+        
+        .result {
+            margin-top: 20px;
+            padding: 16px;
+            border-radius: 8px;
+            font-size: 14px;
+            display: none;
+        }
+        
+        .result.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .result.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .result.show {
+            display: block;
+        }
+        
+        .examples {
+            font-size: 12px;
+            color: #666;
+            margin-top: 8px;
+            line-height: 1.5;
+        }
+        
+        .examples strong {
+            display: block;
+            margin-top: 8px;
+            color: #333;
+        }
+        
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+        
+        .loading.show {
+            display: block;
+        }
+        
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📅 Calendar Bot</h1>
+            <p>Schedule meetings with natural language</p>
+        </div>
+        
+        <div class="card">
+            <div class="input-group">
+                <label>💬 What would you like to do?</label>
+                <textarea 
+                    id="commandInput" 
+                    placeholder="schedule a meet at 3pm next sunday, topic is interview with alex"
+                ></textarea>
+                <div class="examples">
+                    <strong>Examples:</strong>
+                    • schedule meeting tomorrow at 2pm about Q4 planning<br>
+                    • remove meeting at 3pm next sunday<br>
+                    • meeting with john@example.com on friday at 10am
+                </div>
+            </div>
+            
+            <button class="btn btn-primary" onclick="scheduleCommand()">
+                📅 Schedule Meeting
+            </button>
+            <button class="btn btn-secondary" onclick="removeCommand()">
+                🗑️ Remove Meeting
+            </button>
+            
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <p style="margin-top: 12px; color: #666;">Processing...</p>
+            </div>
+            
+            <div class="result" id="result"></div>
+        </div>
+    </div>
+    
+    <script>
+        const API_URL = 'http://localhost:3000';k
+        
+        function showLoading() {
+            document.getElementById('loading').classList.add('show');
+            document.getElementById('result').classList.remove('show');
+        }
+        
+        function hideLoading() {
+            document.getElementById('loading').classList.remove('show');
+        }
+        
+        function showResult(message, isSuccess = true) {
+            const resultDiv = document.getElementById('result');
+            resultDiv.textContent = message;
+            resultDiv.className = 'result show ' + (isSuccess ? 'success' : 'error');
+            hideLoading();
+        }
+        
+        async function scheduleCommand() {
+            const command = document.getElementById('commandInput').value.trim();
+            if (!command) {
+                showResult('Please enter a command', false);
+                return;
+            }
+            
+            showLoading();
+            
+            try {
+                const response = await fetch(`${API_URL}/schedule`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ command })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    if (data.status === 'booked') {
+                        // Just show "Booked" for working hours
+                        showResult(`📅 ${data.message}\n\n${data.topic}\n${data.requested_time}\n\nReason: ${data.reason}`);
+                    } else {
+                        // Show meeting details with Meet link
+                        const meetLink = data.meet_link !== 'No meet link generated' 
+                            ? `\n\n🔗 Meet Link: ${data.meet_link}` 
+                            : '';
+                        showResult(`✅ ${data.message}\n\n📅 ${data.start_time}\n⏱️ ${data.duration} minutes${meetLink}`);
+                    }
+                    document.getElementById('commandInput').value = '';
+                } else {
+                    showResult(`❌ Error: ${data.detail}`, false);
+                }
+            } catch (error) {
+                showResult(`❌ Network error: ${error.message}`, false);
+            }
+        }
+        
+        async function removeCommand() {
+            const command = document.getElementById('commandInput').value.trim();
+            if (!command) {
+                showResult('Please enter a command', false);
+                return;
+            }
+            
+            showLoading();
+            
+            try {
+                const response = await fetch(`${API_URL}/remove`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ command })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showResult(`✅ ${data.message}`);
+                    document.getElementById('commandInput').value = '';
+                } else {
+                    showResult(`❌ Error: ${data.detail}`, false);
+                }
+            } catch (error) {
+                showResult(`❌ Network error: ${error.message}`, false);
+            }
+        }
+        
+        // Allow Enter to submit (Shift+Enter for new line)
+        document.getElementById('commandInput').addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                scheduleCommand();
+            }
+        });
+    </script>
+</body>
+</html>
