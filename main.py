@@ -267,7 +267,10 @@ async def google_auth_callback(request: Request, code: str):
     """
     try:
         calendar_service.handle_auth_callback(code, resolve_redirect_uri(request))
-        return {"status": "success", "message": "Authentication successful"}
+        response = {"status": "success", "message": "Authentication successful"}
+        if os.getenv("RETURN_TOKEN_B64_IN_CALLBACK", "false").lower() == "true":
+            response["google_token_pickle_b64"] = calendar_service.get_latest_token_pickle_b64()
+        return response
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 

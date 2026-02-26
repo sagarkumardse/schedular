@@ -1,0 +1,49 @@
+# Python cache/build
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# Virtual envs
+.venv/
+venv/
+env/
+ENV/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Local environment secrets
+.env
+.env.*
+!.env.example
+
+# Credential and token files
+token.pickle
+creds.json
+client_secret*.json
+credentials*.json
+oauth*.json
+secrets*.json
+*.pem
+*.key
+*.p12
+
+# Test artifacts
+test/scheduler_test_results.json

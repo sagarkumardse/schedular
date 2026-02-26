@@ -1,301 +1,143 @@
-# Calendar Automation Tool
+# Calendar Automation API
 
-FastAPI-based Google Calendar automation with Japanese working hours detection and natural language scheduling.
+FastAPI service that parses natural language meeting requests, checks scheduling rules, and creates Google Calendar events with Meet links.
 
 ## Features
 
-- 🇯🇵 **Japanese Working Hours Detection**: Automatically detects Japanese working days (Mon-Fri, excluding holidays)
-- 💬 **Smart Scheduling**: 
-  - Working hours (9am-7pm on working days) → Returns "Booked"
-  - Outside working hours → Creates actual meeting with Google Meet link
-- 📱 **Mobile-Friendly API**: RESTful API designed for mobile app integration
-- ✏️ **Natural Language**: Schedule/remove meetings with simple text commands
+- Natural-language scheduling through Groq.
+- Google OAuth2 authentication and Calendar integration.
+- Conflict detection before event creation.
+- Event update and delete APIs.
+- Optional SMTP email notifications to host/attendees.
+- Japanese holiday and working-hours logic using `jpholiday`.
 
----
+## Tech Stack
 
-## How It Works
-
-**Simple Logic:**
-
-```
-User: "schedule meet at 3pm next Wednesday, topic is interview with alex"
-
-System checks:
-1. Is it a Japanese working day? (Mon-Fri, not a holiday)
-2. Is time between 9am-7pm?
-
-If YES to both → Response: "Booked" (no actual meeting created)
-If NO to either → Creates meeting + returns Google Meet link
-```
-
-**Examples:**
-- `"meeting tomorrow at 2pm"` (Tuesday) → **"Booked"** (working hours)
-- `"meeting tomorrow at 8pm"` (Tuesday) → **Scheduled** + Meet link (after hours)
-- `"meeting Sunday at 3pm"` → **Scheduled** + Meet link (weekend)
-
----
+- Python 3.10+
+- FastAPI + Uvicorn
+- Google Calendar API (`google-api-python-client`)
+- Groq SDK
 
 ## Setup
 
-### 1. Install Dependencies
+1. Install dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. Google Calendar API Setup
-
-1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Create a new project (or select existing)
-3. Enable **Google Calendar API**
-4. Create OAuth 2.0 credentials:
-   - Application type: Web application
-   - Authorized redirect URIs: `http://localhost:8000/auth/callback`
-5. Download credentials and save as `credentials.json` in project root
-
-### 3. Groq API Setup
-
-1. Get your API key from [Groq Console](https://console.groq.com/)
-2. Create `.env` file:
+2. Create environment file:
 
 ```bash
-cp .env.example .env
+copy .env.example .env
 ```
 
-3. Add your Groq API key to `.env`:
+3. Add credentials and API keys in `.env`.
 
-```
-GROQ_API_KEY=your_actual_groq_api_key
-```
+## Environment Variables
 
-### 4. First Time Authentication
+Required for core flow:
+
+- `GROQ_API_KEY`: Groq API key.
+- `GOOGLE_CREDENTIALS_FILE`: OAuth client secret file path (default: `creds.json`).
+- `GOOGLE_CREDENTIALS_JSON_B64`: Base64 of `creds.json` (preferred for env-only deploy platforms).
+- `GOOGLE_REDIRECT_URI`: OAuth callback URL, e.g. `http://localhost:8000/auth/callback`.
+
+Optional defaults:
+
+- `PARSER_MODEL` (default: `llama-3.3-70b-versatile`)
+- `GOOGLE_TOKEN_FILE` (default: `token.pickle`)
+- `GOOGLE_TOKEN_PICKLE_B64`: Base64 of `token.pickle` for fileless deploy.
+- `RETURN_TOKEN_B64_IN_CALLBACK`: If `true`, callback response includes current token as base64.
+
+Email notifications (optional):
+
+- `SMTP_HOST`
+- `SMTP_PORT` (default: `587`)
+- `SMTP_USERNAME`
+- `SMTP_PASSWORD`
+- `SMTP_FROM` (defaults to `SMTP_USERNAME`)
+- `SMTP_USE_TLS` (`true`/`false`, default: `true`)
+
+## Google OAuth Setup
+
+1. In Google Cloud Console, enable **Google Calendar API**.
+2. Create OAuth client credentials (Web app).
+3. Add authorized redirect URI matching your env value, typically:
+   - `http://localhost:8000/auth/callback`
+4. Save downloaded JSON as `creds.json` in project root (or set `GOOGLE_CREDENTIALS_FILE` to another path).
+
+### Env-Only Deploy (No File Upload Support)
+
+1. Generate token once locally using normal OAuth flow.
+2. Encode local files:
 
 ```bash
-python main.py
+python scripts/encode_google_secrets.py --creds creds.json --token token.pickle
 ```
 
-Visit: `http://localhost:8000/auth/google`
+3. Copy output values into deployment environment variables:
+   - `GOOGLE_CREDENTIALS_JSON_B64`
+   - `GOOGLE_TOKEN_PICKLE_B64`
+4. Deploy without uploading `creds.json` or `token.pickle`.
 
-This will redirect you to Google for authentication. After approval, you're ready to go!
-
----
-
-## Usage
-
-### Start the Server
+## Run
 
 ```bash
-uvicorn main:app --reload
+uvicorn main:app --reload --port 8000
 ```
 
-API will be available at: `http://localhost:8000`
+App URLs:
 
-Interactive docs: `http://localhost:8000/docs`
+- API docs: `http://localhost:8000/docs`
+- UI: `http://localhost:8000/`
 
-### Test with Web UI
+## Auth Flow
 
-Open `mobile_ui.html` in your browser for a simple interface to test the API.
-
----
+1. Open `GET /auth/google`.
+2. Visit returned `auth_url`.
+3. Complete consent screen.
+4. Callback hits `GET /auth/callback`.
+5. Check status via `GET /auth/status`.
 
 ## API Endpoints
 
-### 1. Schedule Meeting (Natural Language)
+- `POST /schedule`
+  - Input: `{ "command": "...", "history": ["..."] }`
+  - Creates event when parsed data is valid.
+- `PUT /events/{event_id}`
+  - Update summary/start/duration/description.
+- `DELETE /events/{event_id}`
+  - Delete calendar event.
+- `GET|POST /auth/google`
+  - Start OAuth flow.
+- `GET /auth/callback`
+  - OAuth callback handler.
+- `GET /auth/status`
+  - Authentication status.
 
-**POST** `/schedule`
-
-```json
-{
-  "command": "schedule a meet at 3pm next sunday, topic is interview with alex"
-}
-```
-
-**Response (Scheduled):**
-```json
-{
-  "status": "scheduled",
-  "message": "Meeting scheduled: Interview with Alex",
-  "meet_link": "https://meet.google.com/xxx-yyyy-zzz",
-  "event_id": "abc123...",
-  "start_time": "2025-02-15 15:00",
-  "duration": 30,
-  "topic": "Interview with Alex"
-}
-```
-
-**Response (Booked):**
-```json
-{
-  "status": "booked",
-  "message": "Booked",
-  "reason": "Japanese working hours (9am-7pm on working days)",
-  "requested_time": "2025-02-12 15:00",
-  "topic": "Interview with Alex"
-}
-```
-
----
-
-### 2. Remove Meeting
-
-**POST** `/remove`
-
-```json
-{
-  "command": "remove meeting at 3pm next sunday"
-}
-```
-
-Or:
-
-```json
-{
-  "command": "cancel interview with alex"
-}
-```
-
----
-
-## Mobile Integration Example
-
-### Using curl (test from terminal)
+## Quick Example
 
 ```bash
-# Schedule a meeting
-curl -X POST "http://localhost:8000/schedule" \
-  -H "Content-Type: application/json" \
-  -d '{"command": "meeting Sunday at 3pm about project review"}'
-
-# Response will include Google Meet link if scheduled
-# Response will just say "Booked" if during working hours
-
-# Remove a meeting
-curl -X POST "http://localhost:8000/remove" \
-  -H "Content-Type: application/json" \
-  -d '{"command": "cancel project review meeting"}'
+curl -X POST "http://localhost:8000/schedule" ^
+  -H "Content-Type: application/json" ^
+  -d "{\"command\":\"schedule a 30 minute meeting tomorrow at 8pm with user@example.com about release planning\"}"
 ```
 
-### Mobile App Integration
+## Test Script
 
-**Example (JavaScript/React Native):**
+Run the concurrent API test harness:
 
-```javascript
-async function scheduleMeeting(textCommand) {
-  const response = await fetch('http://your-server:8000/schedule', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ command: textCommand })
-  });
-  
-  const result = await response.json();
-  
-  if (result.status === 'booked') {
-    alert('Booked - Japanese working hours');
-  } else if (result.status === 'scheduled') {
-    alert(`Meeting scheduled!\nMeet link: ${result.meet_link}`);
-  }
-}
-
-// Usage
-scheduleMeeting("meeting tomorrow at 2pm about sales review");
+```bash
+python test/test.py
 ```
 
----
+Results are written to `scheduler_test_results.json`.
 
-## Project Structure
+## Security Notes
 
-```
-.
-├── main.py                  # FastAPI app with working hours logic
-├── calendar_service.py      # Google Calendar API + Meet links
-├── nlp_parser.py           # Groq-powered natural language parser
-├── requirements.txt        # Python dependencies
-├── .env.example           # Environment variables template
-├── mobile_ui.html         # Simple web UI for testing
-├── credentials.json       # Google OAuth credentials (you provide)
-└── token.pickle          # Auto-generated after first auth
-```
-
----
-
-## Japanese Working Hours Logic
-
-The system uses `jpholiday` library to determine working days:
-
-```python
-def is_japanese_working_hours(dt: datetime) -> bool:
-    # Check if it's a Japanese holiday
-    if jpholiday.is_holiday(dt.date()):
-        return False
-    
-    # Check if it's weekend (Saturday=5, Sunday=6)
-    if dt.weekday() >= 5:
-        return False
-    
-    # Check if time is between 9am and 7pm
-    meeting_time = dt.time()
-    if time(9, 0) <= meeting_time < time(19, 0):
-        return True
-    
-    return False
-```
-
-**Returns "Booked" when:**
-- Monday-Friday (not a holiday)
-- Time is 9am-7pm
-
-**Creates actual meeting when:**
-- Weekend (Saturday/Sunday)
-- Japanese national holiday
-- Outside 9am-7pm hours
-- Any combination of the above
-
----
-
-## Natural Language Examples
-
-The system understands various natural language formats:
-
-```
-✅ "meeting tomorrow at 2pm about Q4 planning"
-✅ "schedule call next Friday at 10am"
-✅ "book 30min meeting on monday at 4pm topic project review"
-✅ "meeting with john@example.com and sarah@example.com tomorrow at 3pm"
-✅ "schedule 90 minute meeting next Sunday at 2pm about strategy"
-✅ "cancel meeting at 3pm next sunday"
-✅ "remove interview with alex"
-```
-
----
-
-## Deployment
-
-### For Production
-
-1. **Use HTTPS** for OAuth callbacks
-2. **Update redirect URI** in Google Cloud Console
-3. **Deploy to cloud** (Railway, Render, Google Cloud Run, AWS, etc.)
-4. **Set environment variables** on your platform
-5. **Use production-grade server** (already using uvicorn)
-
----
-
-## Troubleshooting
-
-### "Not authenticated" error
-Run: `http://localhost:8000/auth/google` and complete OAuth flow
-
-### Groq parsing fails
-Check your `.env` file has correct `GROQ_API_KEY`
-
-### No Google Meet link generated
-Ensure you're authenticated and have Calendar API permissions
-
-### "Booked" appearing when it shouldn't
-Check date/time - system uses Japanese timezone and calendar
-
----
-
-## License
-
-MIT
+- Do not commit `.env`, `token.pickle`, or `creds.json`.
+- `.gitignore` is configured to exclude token/credentials files.
+- If a key/token was ever committed, rotate it before pushing public code.
+- `token.pickle` changes mostly due to short-lived access token refresh; usually you do not need to update env every refresh.
+- Update `GOOGLE_TOKEN_PICKLE_B64` only when re-auth is required (for example refresh token revoked/expired).

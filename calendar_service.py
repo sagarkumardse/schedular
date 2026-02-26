@@ -4,9 +4,14 @@ from google.auth.exceptions import RefreshError
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from datetime import datetime, timedelta
+import base64
+import json
 import os
 import pickle
 from typing import Optional, List, Dict
+from dotenv import load_dotenv
+
+load_dotenv()
 
 class CalendarService:
     SCOPES = ['https://www.googleapis.com/auth/calendar']
@@ -14,30 +19,112 @@ class CalendarService:
     def __init__(self):
         self.token_file = os.getenv('GOOGLE_TOKEN_FILE', 'token.pickle')
         self.credentials_file = os.getenv('GOOGLE_CREDENTIALS_FILE', 'creds.json')
+        self.credentials_json_b64 = os.getenv('GOOGLE_CREDENTIALS_JSON_B64')
+        self.token_pickle_b64 = os.getenv('GOOGLE_TOKEN_PICKLE_B64')
         self.default_redirect_uri = os.getenv('GOOGLE_REDIRECT_URI')
         self.creds = None
         self.service = None
+        self.latest_token_pickle_b64 = None
         self._load_credentials()
+
+    def _decode_base64_to_bytes(self, value: str) -> bytes:
+        cleaned = value.strip()
+        if (cleaned.startswith('"') and cleaned.endswith('"')) or (
+            cleaned.startswith("'") and cleaned.endswith("'")
+        ):
+            cleaned = cleaned[1:-1]
+        cleaned = "".join(cleaned.split())
+        cleaned = cleaned.replace("-", "+").replace("_", "/")
+        padding = len(cleaned) % 4
+        if padding:
+            cleaned += "=" * (4 - padding)
+        return base64.b64decode(cleaned)
+
+    def _load_token_from_env(self) -> Optional[Credentials]:
+        if not self.token_pickle_b64:
+            return None
+        try:
+            token_bytes = self._decode_base64_to_bytes(self.token_pickle_b64)
+            creds = pickle.loads(token_bytes)
+            if isinstance(creds, Credentials):
+                return creds
+        except Exception:
+            return None
+        return None
+
+    def _load_token_from_file(self) -> Optional[Credentials]:
+        if not self.token_file or not os.path.exists(self.token_file):
+            return None
+        try:
+            with open(self.token_file, 'rb') as token:
+                creds = pickle.load(token)
+            if isinstance(creds, Credentials):
+                return creds
+        except Exception:
+            return None
+        return None
+
+    def _serialize_token_to_base64(self) -> Optional[str]:
+        if not self.creds:
+            return None
+        try:
+            token_bytes = pickle.dumps(self.creds)
+            return base64.b64encode(token_bytes).decode('ascii')
+        except Exception:
+            return None
+
+    def _persist_token(self):
+        self.latest_token_pickle_b64 = self._serialize_token_to_base64()
+        if self.creds and self.token_file:
+            try:
+                with open(self.token_file, 'wb') as token:
+                    pickle.dump(self.creds, token)
+            except Exception:
+                pass
+
+    def get_latest_token_pickle_b64(self) -> Optional[str]:
+        if self.latest_token_pickle_b64:
+            return self.latest_token_pickle_b64
+        return self._serialize_token_to_base64()
+
+    def _get_client_config(self) -> Dict:
+        if self.credentials_json_b64:
+            try:
+                raw = self._decode_base64_to_bytes(self.credentials_json_b64).decode('utf-8')
+                return json.loads(raw)
+            except Exception:
+                raise Exception("Invalid GOOGLE_CREDENTIALS_JSON_B64")
+
+        if self.credentials_file and os.path.exists(self.credentials_file):
+            try:
+                with open(self.credentials_file, 'r', encoding='utf-8') as fh:
+                    return json.load(fh)
+            except Exception:
+                raise Exception(f"Invalid credentials file: {self.credentials_file}")
+
+        raise Exception("Google OAuth client credentials not found. Set GOOGLE_CREDENTIALS_JSON_B64 or GOOGLE_CREDENTIALS_FILE.")
+
+    def _build_flow(self, redirect_uri: str) -> Flow:
+        client_config = self._get_client_config()
+        return Flow.from_client_config(
+            client_config,
+            scopes=self.SCOPES,
+            redirect_uri=redirect_uri
+        )
     
     def _load_credentials(self):
-        """Load credentials from token file or initiate auth flow."""
-        if os.path.exists(self.token_file):
-            try:
-                with open(self.token_file, 'rb') as token:
-                    self.creds = pickle.load(token)
-            except Exception:
-                self.creds = None
+        """Load credentials from env/token file and initialize Calendar service."""
+        self.creds = self._load_token_from_env() or self._load_token_from_file()
         
         # Refresh if expired
         if self.creds and self.creds.expired and self.creds.refresh_token:
             try:
                 self.creds.refresh(Request())
-                with open(self.token_file, 'wb') as token:
-                    pickle.dump(self.creds, token)
+                self._persist_token()
             except RefreshError:
                 self.creds = None
                 self.service = None
-                if os.path.exists(self.token_file):
+                if self.token_file and os.path.exists(self.token_file):
                     os.remove(self.token_file)
         
         if self.creds and self.creds.valid:
@@ -52,11 +139,7 @@ class CalendarService:
         if not resolved_redirect_uri:
             raise Exception("Redirect URI not configured.")
 
-        flow = Flow.from_client_secrets_file(
-            self.credentials_file,
-            scopes=self.SCOPES,
-            redirect_uri=resolved_redirect_uri
-        )
+        flow = self._build_flow(resolved_redirect_uri)
         auth_url, _ = flow.authorization_url(
             access_type='offline',
             include_granted_scopes='true',
@@ -70,17 +153,12 @@ class CalendarService:
         if not resolved_redirect_uri:
             raise Exception("Redirect URI not configured.")
 
-        flow = Flow.from_client_secrets_file(
-            self.credentials_file,
-            scopes=self.SCOPES,
-            redirect_uri=resolved_redirect_uri
-        )
+        flow = self._build_flow(resolved_redirect_uri)
         flow.fetch_token(code=code)
         self.creds = flow.credentials
         
-        # Save credentials
-        with open(self.token_file, 'wb') as token:
-            pickle.dump(self.creds, token)
+        # Save credentials to file if possible and always keep a base64 form in memory.
+        self._persist_token()
         
         self.service = build('calendar', 'v3', credentials=self.creds)
     
