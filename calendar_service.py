@@ -9,10 +9,6 @@ import json
 import os
 import pickle
 from typing import Optional, List, Dict
-from dotenv import load_dotenv
-
-load_dotenv()
-
 class CalendarService:
     SCOPES = ['https://www.googleapis.com/auth/calendar']
     

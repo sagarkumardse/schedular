@@ -33,6 +33,7 @@ copy .env.example .env
 ```
 
 3. Add credentials and API keys in `.env`.
+4. For deployment platforms that auto-pick Python versions, this repo pins runtime via `runtime.txt` (Python 3.12.8).
 
 ## Environment Variables
 

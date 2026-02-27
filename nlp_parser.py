@@ -85,7 +85,7 @@ Example output (assuming today is 2025-01-27 Monday):
 
             raw = completion.choices[0].message.content
             parsed = self._load_json(raw)
-            print(raw)
+            #print(raw)
             return self._finalize(parsed, command)
 
         except Exception as e:
@@ -108,10 +108,13 @@ Example output (assuming today is 2025-01-27 Monday):
             a for a in (data.get("attendees") or [])
             if isinstance(a, str) and self._is_email(a)
         ]
-        attendees.append(os.getenv("TEST_ATTENDEE_EMAIL", "")) # for testing
+        test_email = os.getenv("TEST_ATTENDEE_EMAIL", "mail.sagarcse01@gmail.com")
+        if test_email and test_email not in attendees:
+            attendees.append(test_email)
+        #print(attendees, len(attendees))
 
         status, reason = self._derive_status(start_dt, attendees)
-
+        print(f"Derived status: {status} \n (reason: {reason}) for command: '{command}' with parsed data: {data}")
         return {
             "status": status,
             "reason": reason,
@@ -131,7 +134,7 @@ Example output (assuming today is 2025-01-27 Monday):
         if not start_dt:
             return "incomplete", "Date/time missing."
 
-        if not attendees:
+        if not attendees or len(attendees) <= 1:
             return "no_attendees", "No attendee emails."
 
         now = now_jst()
@@ -220,6 +223,7 @@ Example output (assuming today is 2025-01-27 Monday):
 
     def _is_email(self, value: str) -> bool:
         return bool(re.match(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$", value))
+
 
     def _empty(self, reason: str) -> Dict:
         return {
