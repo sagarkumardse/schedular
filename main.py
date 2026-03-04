@@ -19,6 +19,14 @@ except Exception:
 JST = timezone(timedelta(hours=9))
 APP_ENV = os.getenv("APP_ENV", "local").strip().lower()
 IS_PROD = APP_ENV in {"prod", "production"}
+CORS_ORIGINS_ENV = os.getenv("CORS_ORIGINS", "").strip()
+
+if CORS_ORIGINS_ENV:
+    ALLOWED_ORIGINS = [origin.strip() for origin in CORS_ORIGINS_ENV.split(",") if origin.strip()]
+elif IS_PROD:
+    ALLOWED_ORIGINS = ["https://schedular-production-25b6.up.railway.app"]
+else:
+    ALLOWED_ORIGINS = ["http://localhost:5000", "http://127.0.0.1:5000"]
 
 app = FastAPI(
     title="Calendar Automation API",
@@ -30,7 +38,7 @@ app = FastAPI(
 # CORS for mobile access
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
