@@ -9,14 +9,23 @@ import json
 import os
 import pickle
 from typing import Optional, List, Dict
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
+
+
 class CalendarService:
     SCOPES = ['https://www.googleapis.com/auth/calendar']
-    
+
     def __init__(self):
-        self.token_file = os.getenv('GOOGLE_TOKEN_FILE', 'token.pickle')
+        token_file = (os.getenv('GOOGLE_TOKEN_FILE', 'token.pickle') or '').strip()
+        self.token_file = token_file or None
         self.credentials_file = os.getenv('GOOGLE_CREDENTIALS_FILE', 'creds.json')
         self.credentials_json_b64 = os.getenv('GOOGLE_CREDENTIALS_JSON_B64')
         self.token_pickle_b64 = os.getenv('GOOGLE_TOKEN_PICKLE_B64')
+        self.force_consent = os.getenv('GOOGLE_OAUTH_FORCE_CONSENT', 'false').lower() == 'true'
         self.default_redirect_uri = os.getenv('GOOGLE_REDIRECT_URI')
         self.creds = None
         self.service = None
@@ -71,6 +80,8 @@ class CalendarService:
 
     def _persist_token(self):
         self.latest_token_pickle_b64 = self._serialize_token_to_base64()
+        if self.latest_token_pickle_b64:
+            self.token_pickle_b64 = self.latest_token_pickle_b64
         if self.creds and self.token_file:
             try:
                 with open(self.token_file, 'wb') as token:
@@ -82,6 +93,9 @@ class CalendarService:
         if self.latest_token_pickle_b64:
             return self.latest_token_pickle_b64
         return self._serialize_token_to_base64()
+
+    def uses_file_token_storage(self) -> bool:
+        return bool(self.token_file)
 
     def _get_client_config(self) -> Dict:
         if self.credentials_json_b64:
@@ -107,12 +121,12 @@ class CalendarService:
             scopes=self.SCOPES,
             redirect_uri=redirect_uri
         )
-    
+
     def _load_credentials(self):
         """Load credentials from env/token file and initialize Calendar service."""
+        self.service = None
         self.creds = self._load_token_from_env() or self._load_token_from_file()
-        
-        # Refresh if expired
+
         if self.creds and self.creds.expired and self.creds.refresh_token:
             try:
                 self.creds.refresh(Request())
@@ -120,14 +134,26 @@ class CalendarService:
             except RefreshError:
                 self.creds = None
                 self.service = None
+                self.token_pickle_b64 = None
                 if self.token_file and os.path.exists(self.token_file):
                     os.remove(self.token_file)
-        
+
         if self.creds and self.creds.valid:
             self.service = build('calendar', 'v3', credentials=self.creds)
-    
-    def is_authenticated(self) -> bool:
+
+    def _ensure_authenticated(self) -> bool:
+        if self.service is not None:
+            return True
+        self._load_credentials()
         return self.service is not None
+
+    def _require_service(self):
+        if not self._ensure_authenticated():
+            raise Exception("Not authenticated. Please authenticate first.")
+        return self.service
+
+    def is_authenticated(self) -> bool:
+        return self._ensure_authenticated()
 
     def get_auth_url(self, redirect_uri: Optional[str] = None) -> str:
         """Get Google OAuth authorization URL."""
@@ -136,13 +162,15 @@ class CalendarService:
             raise Exception("Redirect URI not configured.")
 
         flow = self._build_flow(resolved_redirect_uri)
-        auth_url, _ = flow.authorization_url(
+        auth_kwargs = dict(
             access_type='offline',
             include_granted_scopes='true',
-            prompt='consent'
         )
+        if self.force_consent:
+            auth_kwargs['prompt'] = 'consent'
+        auth_url, _ = flow.authorization_url(**auth_kwargs)
         return auth_url
-    
+
     def handle_auth_callback(self, code: str, redirect_uri: Optional[str] = None):
         """Handle OAuth callback and save credentials."""
         resolved_redirect_uri = redirect_uri or self.default_redirect_uri
@@ -169,11 +197,9 @@ class CalendarService:
         add_meet_link: bool = False
     ) -> Dict:
         """Create a calendar event with optional Google Meet link."""
-        if not self.service:
-            raise Exception("Not authenticated. Please authenticate first.")
-        
+        service = self._require_service()
         end_time = start_time + timedelta(minutes=duration_minutes)
-        
+
         event = {
             'summary': summary,
             'description': description,
@@ -198,8 +224,8 @@ class CalendarService:
                     'conferenceSolutionKey': {'type': 'hangoutsMeet'}
                 }
             }
-        
-        created_event = self.service.events().insert(
+
+        created_event = service.events().insert(
             calendarId='primary',
             body=event,
             conferenceDataVersion=1 if add_meet_link else 0,
@@ -247,10 +273,8 @@ class CalendarService:
         max_results: int = 100
     ) -> List[Dict]:
         """Get events in a time range."""
-        if not self.service:
-            raise Exception("Not authenticated. Please authenticate first.")
-        
-        events_result = self.service.events().list(
+        service = self._require_service()
+        events_result = service.events().list(
             calendarId='primary',
             timeMin=start_time,
             timeMax=end_time,
@@ -263,23 +287,18 @@ class CalendarService:
 
     def get_event(self, event_id: str) -> Dict:
         """Get a single event by id."""
-        if not self.service:
-            raise Exception("Not authenticated. Please authenticate first.")
-
-        return self.service.events().get(
+        service = self._require_service()
+        return service.events().get(
             calendarId='primary',
             eventId=event_id
         ).execute()
-    
+
     def find_events(
         self,
         start_time: Optional[datetime] = None,
         summary: Optional[str] = None
     ) -> List[Dict]:
         """Find events matching criteria."""
-        if not self.service:
-            raise Exception("Not authenticated. Please authenticate first.")
-        
         # Search in a reasonable time window
         if start_time:
             time_min = (start_time - timedelta(hours=1)).isoformat() + 'Z'
@@ -306,15 +325,13 @@ class CalendarService:
         timezone: str = "Asia/Tokyo"
     ) -> Dict:
         """Update an existing event."""
-        if not self.service:
-            raise Exception("Not authenticated. Please authenticate first.")
-        
+        service = self._require_service()
         # Get existing event
-        event = self.service.events().get(
+        event = service.events().get(
             calendarId='primary',
             eventId=event_id
         ).execute()
-        
+
         # Update fields
         if summary:
             event['summary'] = summary
@@ -338,21 +355,19 @@ class CalendarService:
                 'dateTime': end_time.isoformat(),
                 'timeZone': timezone,
             }
-        
-        updated_event = self.service.events().update(
+
+        updated_event = service.events().update(
             calendarId='primary',
             eventId=event_id,
             body=event
         ).execute()
-        
+
         return updated_event
-    
+
     def delete_event(self, event_id: str):
         """Delete an event."""
-        if not self.service:
-            raise Exception("Not authenticated. Please authenticate first.")
-        
-        self.service.events().delete(
+        service = self._require_service()
+        service.events().delete(
             calendarId='primary',
             eventId=event_id
         ).execute()

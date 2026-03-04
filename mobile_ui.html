@@ -229,45 +229,56 @@
             resultDiv.className = 'result show ' + (isSuccess ? 'success' : 'error');
             hideLoading();
         }
-        
+
         async function scheduleCommand() {
             const command = document.getElementById('commandInput').value.trim();
             if (!command) {
                 showResult('Please enter a command', false);
                 return;
             }
-            
+
             showLoading();
-            
+
             try {
                 const response = await fetch(`${API_URL}/schedule`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ command })
                 });
-                
+
                 const data = await response.json();
-                
-                if (response.ok) {
-                    if (data.status === 'booked') {
-                        // Just show "Booked" for working hours
-                        showResult(`📅 ${data.message}\n\n${data.topic}\n${data.requested_time}\n\nReason: ${data.reason}`);
-                    } else {
-                        // Show meeting details with Meet link
-                        const meetLink = data.meet_link !== 'No meet link generated' 
-                            ? `\n\n🔗 Meet Link: ${data.meet_link}` 
-                            : '';
-                        showResult(`✅ ${data.message}\n\n📅 ${data.start_time}\n⏱️ ${data.duration} minutes${meetLink}`);
-                    }
-                    document.getElementById('commandInput').value = '';
-                } else {
-                    showResult(`❌ Error: ${data.detail}`, false);
+
+                if (!response.ok) {
+                    showResult(`Error: ${data.detail || 'Request failed'}`, false);
+                    return;
                 }
+
+                const isScheduled = data.status === 'valid';
+                if (isScheduled) {
+                    const meetLink = data.meet_link && data.meet_link !== 'No meet link generated'
+                        ? `\n\nMeet Link: ${data.meet_link}`
+                        : '';
+                    showResult(
+                        `Scheduled: ${data.message}\n\n` +
+                        `Topic: ${data.topic || 'N/A'}\n` +
+                        `Start: ${data.start_time || 'N/A'}\n` +
+                        `Duration: ${data.duration || 'N/A'} minutes${meetLink}`,
+                        true
+                    );
+                    document.getElementById('commandInput').value = '';
+                    return;
+                }
+
+                const reason = data.reason ? `\nReason: ${data.reason}` : '';
+                showResult(
+                    `${data.message || 'Canceled'}\nStatus: ${data.status || 'unknown'}${reason}`,
+                    false
+                );
             } catch (error) {
-                showResult(`❌ Network error: ${error.message}`, false);
+                showResult(`Network error: ${error.message}`, false);
             }
         }
-        
+
         async function removeCommand() {
             const command = document.getElementById('commandInput').value.trim();
             if (!command) {
@@ -307,4 +318,6 @@
     </script>
 </body>
 </html>
+
+
 

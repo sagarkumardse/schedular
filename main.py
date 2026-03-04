@@ -9,6 +9,13 @@ from nlp_parser import MeetingParser
 from fastapi.staticfiles import StaticFiles
 from invite_email import send_meeting_notifications
 from utils import has_overlapping_event, _parse_google_datetime,is_japanese_working_hours
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
+
 JST = timezone(timedelta(hours=9))
 APP_ENV = os.getenv("APP_ENV", "local").strip().lower()
 IS_PROD = APP_ENV in {"prod", "production"}
@@ -275,7 +282,8 @@ async def google_auth_callback(request: Request, code: str):
     try:
         calendar_service.handle_auth_callback(code, resolve_redirect_uri(request))
         response = {"status": "success", "message": "Authentication successful"}
-        if os.getenv("RETURN_TOKEN_B64_IN_CALLBACK", "false").lower() == "true":
+        return_token_b64 = os.getenv("RETURN_TOKEN_B64_IN_CALLBACK", "false").lower() == "true"
+        if return_token_b64 or not calendar_service.uses_file_token_storage():
             response["google_token_pickle_b64"] = calendar_service.get_latest_token_pickle_b64()
         return response
     except Exception as e:
