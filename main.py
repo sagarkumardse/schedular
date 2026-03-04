@@ -10,8 +10,15 @@ from fastapi.staticfiles import StaticFiles
 from invite_email import send_meeting_notifications
 from utils import has_overlapping_event, _parse_google_datetime,is_japanese_working_hours
 JST = timezone(timedelta(hours=9))
+APP_ENV = os.getenv("APP_ENV", "local").strip().lower()
+IS_PROD = APP_ENV in {"prod", "production"}
 
-app = FastAPI(title="Calendar Automation API")
+app = FastAPI(
+    title="Calendar Automation API",
+    docs_url=None if IS_PROD else "/docs",
+    redoc_url=None if IS_PROD else "/redoc",
+    openapi_url=None if IS_PROD else "/openapi.json",
+)
 
 # CORS for mobile access
 app.add_middleware(

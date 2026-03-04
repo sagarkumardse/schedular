@@ -209,7 +209,10 @@
     </div>
     
     <script>
-        const API_URL = 'http://localhost:3000';k
+        const isLocalHost = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+        const API_URL = isLocalHost
+            ? 'http://localhost:5000'
+            : 'https://schedular-production-25b6.up.railway.app';
         
         function showLoading() {
             document.getElementById('loading').classList.add('show');
@@ -304,3 +307,4 @@
     </script>
 </body>
 </html>
+
