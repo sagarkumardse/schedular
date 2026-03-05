@@ -8,6 +8,7 @@ import base64
 import json
 import os
 import pickle
+import httpx
 from typing import Optional, List, Dict
 try:
     from dotenv import load_dotenv
@@ -57,6 +58,34 @@ class CalendarService:
             return None
         return None
 
+    def _get_client_oauth_fields(self) -> Dict[str, Optional[str]]:
+        """Extract OAuth client fields required for refresh."""
+        cfg = self._get_client_config()
+        section = cfg.get("web") or cfg.get("installed") or {}
+        return {
+            "client_id": section.get("client_id"),
+            "client_secret": section.get("client_secret"),
+            "token_uri": section.get("token_uri"),
+        }
+
+    def _hydrate_credentials_for_refresh(self, creds: Credentials) -> Credentials:
+        """
+        Backfill missing refresh fields on deserialized credentials.
+        This avoids refresh failures when token payload is incomplete.
+        """
+        try:
+            oauth = self._get_client_oauth_fields()
+        except Exception:
+            return creds
+
+        if not getattr(creds, "client_id", None) and oauth.get("client_id"):
+            creds._client_id = oauth["client_id"]  # noqa: SLF001
+        if not getattr(creds, "client_secret", None) and oauth.get("client_secret"):
+            creds._client_secret = oauth["client_secret"]  # noqa: SLF001
+        if not getattr(creds, "token_uri", None) and oauth.get("token_uri"):
+            creds._token_uri = oauth["token_uri"]  # noqa: SLF001
+        return creds
+
     def _load_token_from_file(self) -> Optional[Credentials]:
         if not self.token_file or not os.path.exists(self.token_file):
             return None
@@ -77,6 +106,45 @@ class CalendarService:
             return base64.b64encode(token_bytes).decode('ascii')
         except Exception:
             return None
+    import httpx
+
+    def _update_railway_env(self):
+        railway_token = os.getenv("RAILWAY_API_TOKEN")
+        service_id = os.getenv("RAILWAY_SERVICE_ID")
+        environment_id = os.getenv("RAILWAY_ENVIRONMENT_ID")
+        
+        if not all([railway_token, service_id, environment_id]):
+            return  # Skip if not on Railway
+        
+        new_value = self._serialize_token_to_base64()
+        if not new_value:
+            return
+
+        query = """
+        mutation UpsertVariables($input: VariableCollectionUpsertInput!) {
+            variableCollectionUpsert(input: $input)
+        }
+        """
+        variables = {
+            "input": {
+                "projectId": os.getenv("RAILWAY_PROJECT_ID"),
+                "environmentId": environment_id,
+                "serviceId": service_id,
+                "variables": {
+                    "GOOGLE_TOKEN_PICKLE_B64": new_value
+                }
+            }
+        }
+
+        try:
+            httpx.post(
+                "https://backboard.railway.app/graphql/v2",
+                json={"query": query, "variables": variables},
+                headers={"Authorization": f"Bearer {railway_token}"},
+                timeout=10
+            )
+        except Exception:
+            pass  # Don't crash the app if this fails
 
     def _persist_token(self):
         self.latest_token_pickle_b64 = self._serialize_token_to_base64()
@@ -88,6 +156,9 @@ class CalendarService:
                     pickle.dump(self.creds, token)
             except Exception:
                 pass
+        self._update_railway_env()
+
+
 
     def get_latest_token_pickle_b64(self) -> Optional[str]:
         if self.latest_token_pickle_b64:
@@ -126,6 +197,8 @@ class CalendarService:
         """Load credentials from env/token file and initialize Calendar service."""
         self.service = None
         self.creds = self._load_token_from_env() or self._load_token_from_file()
+        if self.creds:
+            self.creds = self._hydrate_credentials_for_refresh(self.creds)
 
         if self.creds and self.creds.expired and self.creds.refresh_token:
             try:
@@ -137,11 +210,17 @@ class CalendarService:
                 self.token_pickle_b64 = None
                 if self.token_file and os.path.exists(self.token_file):
                     os.remove(self.token_file)
+        elif self.creds and self.creds.expired and not self.creds.refresh_token:
+            # Expired non-refreshable token should be treated as unauthenticated.
+            self.creds = None
+            self.service = None
 
         if self.creds and self.creds.valid:
             self.service = build('calendar', 'v3', credentials=self.creds)
 
     def _ensure_authenticated(self) -> bool:
+        if self.creds and self.creds.expired:
+            self._load_credentials()
         if self.service is not None:
             return True
         self._load_credentials()
